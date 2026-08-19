@@ -7,10 +7,10 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.37
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.36
 	github.com/aws/aws-sdk-go-v2/service/sesv2 v1.66.6
-	github.com/caerus-framework/caerus-framework v0.0.11
-	github.com/caerus-framework/caerus-framework-configuration v0.0.10
-	github.com/caerus-framework/caerus-framework-logs v0.0.9
-	github.com/caerus-framework/caerus-framework-observability v0.0.8
+	github.com/caerus-framework/caerus-framework v0.0.12
+	github.com/caerus-framework/caerus-framework-configuration v0.0.13
+	github.com/caerus-framework/caerus-framework-logs v0.0.11
+	github.com/caerus-framework/caerus-framework-observability v0.0.11
 	github.com/resend/resend-go/v2 v2.28.0
 )
 
@@ -53,19 +53,11 @@ require (
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/tools v0.49.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20260810153831-ec0a7760b754 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260810153831-ec0a7760b754 // indirect
-	google.golang.org/grpc v1.83.0 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20260818201246-1b0934165a6f // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260818201246-1b0934165a6f // indirect
+	google.golang.org/grpc v1.83.1 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
 tool github.com/caerus-framework/caerus-framework/cmd/caerusvet
-
-replace github.com/caerus-framework/caerus-framework => ../caerus-framework
-
-replace github.com/caerus-framework/caerus-framework-configuration => ../caerus-framework-configuration
-
-replace github.com/caerus-framework/caerus-framework-logs => ../caerus-framework-logs
-
-replace github.com/caerus-framework/caerus-framework-observability => ../caerus-framework-observability
