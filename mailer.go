@@ -196,7 +196,7 @@ func (c *CFMail) applyConfigFromSource() error {
 	if !ok {
 		return fmt.Errorf("cf_mail: configuration source %q not found", c.configSource)
 	}
-	c.applyConfig(*loaded)
+	c.applyConfig(loaded)
 	return nil
 }
 
