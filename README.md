@@ -100,9 +100,12 @@ ReplyTo, Tags, optional IdempotencyKey). One extra attempt runs on HTTP
 **429** or **5xx** (honor `Retry-After`, wait capped at 1s, stop if `ctx` is
 done). 422 and network errors are not retried.
 
-**From:** `from_address` / `WithFromAddress` is a **soft default**. Empty
-`Mail.From` uses it. Non-empty `Mail.From` overrides that send. If both are
-empty, or the resolved address or any `To` does not parse as an email
+**From:** when the component uses `WithConfigSource`, `from_address` is
+**required** on the source (startup and reload validation). It is the
+soft default sender: empty `Mail.From` uses it; non-empty `Mail.From`
+overrides that send only. Without a config source, `WithFromAddress` or
+`Mail.From` per send still apply. If both defaults are empty, or the
+resolved address or any `To` does not parse as an email
 (`net/mail.ParseAddress`), Send fails. At least one of HTML or Text is required.
 
 `IdempotencyKey` is sent to Resend and Unisender Go. SES v2 `SendEmail` has
