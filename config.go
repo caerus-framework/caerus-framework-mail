@@ -1,6 +1,7 @@
 package cf_mail
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -101,6 +102,16 @@ func (cfg MailConfig) mergeFlatEnv() MailConfig {
 		cfg.UnisenderGo.SkipUnsubscribe = cfg.UnisenderGoSkipUnsub
 	}
 	return cfg
+}
+
+// validateMailConfig runs on every successful load of a registered mail source.
+// from_address must be non-empty so misconfiguration fails at startup or reload
+// rather than on the first Send.
+func validateMailConfig(cfg *MailConfig) error {
+	if strings.TrimSpace(cfg.mergeFlatEnv().FromAddress) == "" {
+		return errors.New("cf_mail: from_address is required")
+	}
+	return nil
 }
 
 func normalizeProvider(raw string) (string, error) {

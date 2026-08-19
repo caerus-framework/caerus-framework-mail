@@ -170,8 +170,7 @@ func (c *CFMail) Init(ctx context.Context, fw *cf.CaerusFramework) error {
 		if err := c.applyConfigFromSource(); err != nil {
 			return err
 		}
-	}
-	if c.from == "" {
+	} else if c.from == "" {
 		c.logger.Warn("cf_mail: no from_address configured; Send must set Mail.From")
 	}
 	sender, err := c.buildSender(ctx)
@@ -291,6 +290,7 @@ func (c *CFMail) RegisterConfigSources(conf any) error {
 		Format:    format,
 		Owner:     c.Name(),
 		EnvPrefix: c.srcEnvPrefix,
+		Validate:  validateMailConfig,
 	})
 }
 

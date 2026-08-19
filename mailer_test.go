@@ -304,7 +304,7 @@ func TestReloadLastGood(t *testing.T) {
 		t.Fatalf("client after Init = %+v", m.ResendClient())
 	}
 
-	writeConfig(t, dir, "mail.json", `{"provider":"resend","resend":{"base_url":"://bad"}}`)
+	writeConfig(t, dir, "mail.json", `{"provider":"resend","resend":{"api_key":"re_k1","base_url":"://bad"},"from_address":"a@x.io"}`)
 	conf, ok := cf.Get[*cf_configuration.Configuration](fw)
 	if !ok {
 		t.Fatal("configuration missing")
@@ -350,6 +350,22 @@ func TestReloadUpdatesSender(t *testing.T) {
 	}
 	if n := m.reloads.Load(); n != 1 {
 		t.Fatalf("reloads = %d", n)
+	}
+}
+
+func TestInitializeRejectsEmptyFromAddress(t *testing.T) {
+	dir := t.TempDir()
+	path := writeConfig(t, dir, "mail.json", `{"provider":"resend","resend":{"api_key":"re_k1"}}`)
+
+	fw := cf.New()
+	addComponent(t, fw, cf_logs.New(cf_logs.WithWriter(io.Discard)))
+	addComponent(t, fw, cf_configuration.New())
+	m := New(WithConfigSource("mail", path))
+	if err := fw.AddComponent(m); err != nil {
+		t.Fatalf("AddComponent: %v", err)
+	}
+	if err := fw.Initialize(context.Background()); err == nil {
+		t.Fatal("Initialize should fail when from_address is missing")
 	}
 }
 
