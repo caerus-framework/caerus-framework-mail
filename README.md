@@ -100,9 +100,10 @@ ReplyTo, Tags, optional IdempotencyKey). One extra attempt runs on HTTP
 **429** or **5xx** (honor `Retry-After`, wait capped at 1s, stop if `ctx` is
 done). 422 and network errors are not retried.
 
-**From:** when the component uses `WithConfigSource`, `from_address` is
-**required** on the source (startup and reload validation). It is the
-soft default sender: empty `Mail.From` uses it; non-empty `Mail.From`
+**From:** when the component uses `WithConfigSource`, a resolvable soft
+default From is **required** on the source (startup and reload validation):
+top-level `from_address`, or Resend `default_profile` / `profiles` (see
+below). Soft default: empty `Mail.From` uses it; non-empty `Mail.From`
 overrides that send only. Without a config source, `WithFromAddress` or
 `Mail.From` per send still apply. If both defaults are empty, or the
 resolved address or any `To` does not parse as an email
@@ -130,11 +131,18 @@ if err != nil {
 	}
 	return err
 }
+
+// Resend multi-domain: pick a named profile (api_key + from).
+id, err = a.email.SendWithProfile(ctx, "kronos", cf_mail.Mail{
+	To:      []string{"user@example.com"},
+	Subject: "Welcome",
+	HTML:    "<p>Hi!</p>",
+})
 ```
 
 Peers resolve the component once at `Init` (declare `cf_mail.ComponentName`
-in `GetDependencies`) and call `Send` per use — never snapshot a provider
-client, since config reload swaps it.
+in `GetDependencies`) and call `Send` / `SendWithProfile` per use — never
+snapshot a provider client, since config reload swaps it.
 
 ## Configuration
 
@@ -152,7 +160,9 @@ The configuration env overlay does **not** walk nested structs, so local
   "timeout_sec": 10,
   "resend": {
     "api_key": "re_…",
-    "base_url": ""
+    "base_url": "",
+    "default_profile": "",
+    "profiles": {}
   },
   "ses": {
     "region": "eu-central-1",
@@ -177,6 +187,8 @@ Default `EnvPrefix` is `MAIL_` (from the source name `mail`).
 | HTTP timeout seconds | `timeout_sec` | `MAIL_TIMEOUT_SEC` |
 | Resend API key | `resend.api_key` | `MAIL_RESEND_API_KEY` |
 | Resend base URL | `resend.base_url` | `MAIL_RESEND_BASE_URL` |
+| Resend default profile | `resend.default_profile` | — (file only) |
+| Resend named profiles | `resend.profiles.<name>.*` | — (file only) |
 | SES region | `ses.region` | `MAIL_SES_REGION` |
 | SES access key | `ses.access_key_id` | `MAIL_SES_ACCESS_KEY_ID` |
 | SES secret | `ses.secret_access_key` | `MAIL_SES_SECRET_ACCESS_KEY` |
@@ -192,6 +204,51 @@ Wrong: provider "unisender"  → campaign Unisender.com API (not implemented)
 Right: provider "unisender_go" → transactional email/send on goapi.unisender.ru
 ```
 
+### Resend named profiles (multi-domain / multi-key)
+
+Resend API keys are often bound to **one** verified domain. One Auth process
+that sends as several apps therefore needs **several** keys. Put them under
+`resend.profiles` (Path A — one mail component, not several `WithName`
+instances).
+
+```json
+{
+  "provider": "resend",
+  "resend": {
+    "default_profile": "kronos",
+    "profiles": {
+      "kronos": {
+        "api_key": "re_kronos_…",
+        "from_address": "noreply@kronos.example"
+      },
+      "stock-market": {
+        "api_key": "re_sm_…",
+        "from_address": "hello@stock.example"
+      }
+    }
+  }
+}
+```
+
+| Call | Which key / From |
+|---|---|
+| `Send` | `default_profile` when set; else legacy `resend.api_key` + top-level `from_address` |
+| `SendWithProfile(name, …)` | `resend.profiles[name]` |
+
+Rules juniors trip on:
+
+- Each profile needs **both** `api_key` and `from_address`.
+- `default_profile` must name an entry in `profiles` (or be omitted).
+- Profiles-only (no top-level `from_address`, no `default_profile`) is valid:
+  `SendWithProfile` works; plain `Send` fails until you set a default.
+- SES and Unisender Go do **not** use profiles — one credential can send
+  from many verified domains; set `Mail.From` per send instead.
+- Flat `MAIL_RESEND_API_KEY` only fills the legacy single key, not profiles.
+  In Kubernetes, put profile keys in the mounted `mail.json` (ESO template).
+
+You can still keep a legacy `resend.api_key` + top-level `from_address`
+**and** add profiles; `Send` stays on the legacy pair unless
+`default_profile` is set.
 ### SES credentials (two exclusive paths)
 
 **Path A — file keys (local / explicit):** set both `access_key_id` and
@@ -247,6 +304,7 @@ The `from` label on traffic counters is the **actual sender of each email**.
 | `WithTimeout(d)` | per-send HTTP timeout (default `10s`) |
 | `WithHTTPClient(*http.Client)` | stub RoundTripper in tests; used by every provider |
 | `WithResendAPIKey` / `WithResendBaseURL` | Resend construct-time |
+| `WithResendProfiles` / `WithResendDefaultProfile` | Resend named profiles (tests / embedded) |
 | `WithSESRegion` / `WithSESCredentials` / `WithSESEndpoint` | SES construct-time |
 | `WithUnisenderGoAPIKey` / `WithUnisenderGoBaseURL` | Unisender Go construct-time |
 | `WithName(name)` | custom component name (default `"mail"`) |

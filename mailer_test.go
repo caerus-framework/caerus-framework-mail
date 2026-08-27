@@ -158,6 +158,147 @@ func TestSendResend(t *testing.T) {
 	}
 }
 
+func TestSendWithProfileResend(t *testing.T) {
+	stub := &stubRoundTripper{body: `{"id":"email_p"}`, code: 200}
+	m := New(
+		WithProvider(ProviderResend),
+		WithResendProfiles(map[string]ResendProfile{
+			"kronos":       {APIKey: "re_kronos", FromAddress: "noreply@kronos.example"},
+			"stock-market": {APIKey: "re_sm", FromAddress: "hello@stock.example"},
+		}),
+		WithHTTPClient(&http.Client{Transport: stub}),
+	)
+	if err := m.Init(context.Background(), cf.New()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	t.Cleanup(func() { _ = m.Shutdown(context.Background()) })
+
+	if got := m.ResendProfiles(); len(got) != 2 || got[0] != "kronos" || got[1] != "stock-market" {
+		t.Fatalf("ResendProfiles() = %v", got)
+	}
+	if _, err := m.Send(context.Background(), testMail("user@example.com")); err == nil {
+		t.Fatal("Send without default should fail when only profiles are set")
+	}
+	if _, err := m.SendWithProfile(context.Background(), "missing", testMail("user@example.com")); err == nil {
+		t.Fatal("unknown profile should fail")
+	}
+
+	id, err := m.SendWithProfile(context.Background(), "kronos", testMail("user@example.com"))
+	if err != nil {
+		t.Fatalf("SendWithProfile: %v", err)
+	}
+	if id != "email_p" {
+		t.Fatalf("id = %q", id)
+	}
+	if !strings.HasPrefix(stub.lastReq.Header.Get("Authorization"), "Bearer re_kronos") {
+		t.Fatalf("Authorization = %q", stub.lastReq.Header.Get("Authorization"))
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(stub.lastBody), &payload); err != nil {
+		t.Fatalf("body: %v", err)
+	}
+	if payload["from"] != "noreply@kronos.example" {
+		t.Fatalf("from = %v", payload["from"])
+	}
+
+	stub.calls = 0
+	id, err = m.SendWithProfile(context.Background(), "stock-market", testMail("user@example.com"))
+	if err != nil {
+		t.Fatalf("SendWithProfile stock-market: %v", err)
+	}
+	if id != "email_p" {
+		t.Fatalf("id = %q", id)
+	}
+	if !strings.HasPrefix(stub.lastReq.Header.Get("Authorization"), "Bearer re_sm") {
+		t.Fatalf("Authorization = %q", stub.lastReq.Header.Get("Authorization"))
+	}
+}
+
+func TestSendResendDefaultProfile(t *testing.T) {
+	stub := &stubRoundTripper{body: `{"id":"email_d"}`, code: 200}
+	m := New(
+		WithProvider(ProviderResend),
+		WithResendDefaultProfile("kronos"),
+		WithResendProfiles(map[string]ResendProfile{
+			"kronos": {APIKey: "re_kronos", FromAddress: "noreply@kronos.example"},
+		}),
+		WithHTTPClient(&http.Client{Transport: stub}),
+	)
+	if err := m.Init(context.Background(), cf.New()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	t.Cleanup(func() { _ = m.Shutdown(context.Background()) })
+	if m.From() != "noreply@kronos.example" {
+		t.Fatalf("From() = %q", m.From())
+	}
+	if m.ResendClient() == nil || m.ResendClient().ApiKey != "re_kronos" {
+		t.Fatalf("ResendClient = %+v", m.ResendClient())
+	}
+	id, err := m.Send(context.Background(), testMail("user@example.com"))
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if id != "email_d" {
+		t.Fatalf("id = %q", id)
+	}
+	if !strings.HasPrefix(stub.lastReq.Header.Get("Authorization"), "Bearer re_kronos") {
+		t.Fatalf("Authorization = %q", stub.lastReq.Header.Get("Authorization"))
+	}
+}
+
+func TestReloadResendProfiles(t *testing.T) {
+	dir := t.TempDir()
+	path := writeConfig(t, dir, "mail.json", `{
+		"provider":"resend",
+		"resend":{
+			"default_profile":"kronos",
+			"profiles":{
+				"kronos":{"api_key":"re_k1","from_address":"a@kronos.example"},
+				"other":{"api_key":"re_o","from_address":"o@x.example"}
+			}
+		}
+	}`)
+
+	fw := cf.New()
+	addComponent(t, fw, cf_logs.New(cf_logs.WithWriter(io.Discard)))
+	addComponent(t, fw, cf_configuration.New())
+	m := New(WithConfigSource("mail", path))
+	addComponent(t, fw, m)
+	if err := fw.Initialize(context.Background()); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	t.Cleanup(func() { _ = fw.Shutdown(context.Background()) })
+	if got := m.ResendProfiles(); len(got) != 2 {
+		t.Fatalf("profiles after Init = %v", got)
+	}
+
+	writeConfig(t, dir, "mail.json", `{
+		"provider":"resend",
+		"resend":{
+			"default_profile":"kronos",
+			"profiles":{
+				"kronos":{"api_key":"re_k2","from_address":"b@kronos.example"}
+			}
+		}
+	}`)
+	conf, ok := cf.Get[*cf_configuration.Configuration](fw)
+	if !ok {
+		t.Fatal("configuration missing")
+	}
+	if err := conf.Reload("mail"); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if got := m.ResendProfiles(); len(got) != 1 || got[0] != "kronos" {
+		t.Fatalf("profiles after reload = %v", got)
+	}
+	if m.From() != "b@kronos.example" {
+		t.Fatalf("From() = %q", m.From())
+	}
+	if m.ResendClient() == nil || m.ResendClient().ApiKey != "re_k2" {
+		t.Fatalf("client after reload = %+v", m.ResendClient())
+	}
+}
+
 func TestSendUnisenderGo(t *testing.T) {
 	stub := &stubRoundTripper{body: `{"status":"success","job_id":"1ZymBc-00041N-9X"}`, code: 200}
 	m := New(WithProvider(ProviderUnisenderGo), WithUnisenderGoAPIKey("ug_key"),
