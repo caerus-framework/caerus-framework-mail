@@ -110,6 +110,12 @@ func (c *CFMail) applyConfig(cfg MailConfig) {
 	if cfg.Resend.BaseURL != "" {
 		c.resend.BaseURL = cfg.Resend.BaseURL
 	}
+	if cfg.Resend.DefaultProfile != "" {
+		c.resend.DefaultProfile = cfg.Resend.DefaultProfile
+	}
+	if cfg.Resend.Profiles != nil {
+		c.resend.Profiles = cloneResendProfiles(cfg.Resend.Profiles)
+	}
 	if cfg.SES.Region != "" {
 		c.ses.Region = cfg.SES.Region
 	}
@@ -196,6 +202,11 @@ func (c *CFMail) applyConfigFromSource() error {
 		return fmt.Errorf("cf_mail: configuration source %q not found", c.configSource)
 	}
 	c.applyConfig(loaded)
+	// File is canonical: replace Resend profile map (including clear) so a
+	// removed profile does not stick after reload.
+	merged := loaded.mergeFlatEnv()
+	c.resend.Profiles = cloneResendProfiles(merged.Resend.Profiles)
+	c.resend.DefaultProfile = merged.Resend.DefaultProfile
 	return nil
 }
 
@@ -220,7 +231,18 @@ func (c *CFMail) buildSender(ctx context.Context) (mailSender, error) {
 func (c *CFMail) credentialForLog() string {
 	switch c.provider {
 	case ProviderResend:
-		return c.resend.APIKey
+		if c.resend.APIKey != "" {
+			return c.resend.APIKey
+		}
+		if dp := strings.TrimSpace(c.resend.DefaultProfile); dp != "" {
+			if p, ok := c.resend.Profiles[dp]; ok {
+				return p.APIKey
+			}
+		}
+		if len(c.resend.Profiles) > 0 {
+			return "profiles"
+		}
+		return ""
 	case ProviderSES:
 		if c.ses.AccessKeyID != "" {
 			return c.ses.SecretAccessKey
@@ -247,6 +269,7 @@ func (c *CFMail) OnConfigReload(source string, cfg any) {
 	}
 	prevProvider, prevFrom, prevTimeout := c.provider, c.from, c.timeout
 	prevResend, prevSES, prevUni := c.resend, c.ses, c.unisender
+	prevResend.Profiles = cloneResendProfiles(c.resend.Profiles)
 	if err := c.applyConfigFromSource(); err != nil {
 		c.logger.Error("cf_mail: config reload rejected; keeping previous", "err", err)
 		return
@@ -316,20 +339,50 @@ func (c *CFMail) Provider() string {
 	return c.provider
 }
 
-// From returns the configured soft-default sender.
+// From returns the configured soft-default sender. When Resend
+// default_profile is active, that is the profile's from_address.
 func (c *CFMail) From() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+	if m, ok := c.sender.(*resendMux); ok && m.defProfile != "" {
+		if p, ok := m.profiles[m.defProfile]; ok {
+			return p.from
+		}
+	}
 	return c.from
 }
 
-// ResendClient returns the live Resend SDK client, or nil when the active
-// provider is not resend (or before Init / after Shutdown).
+// ResendClient returns the live Resend SDK client for the default sender, or
+// nil when the active provider is not resend (or before Init / after Shutdown).
+// With named profiles this is the legacy api_key client, or the
+// default_profile client when that setting is set — not a profile picked via
+// SendWithProfile.
 func (c *CFMail) ResendClient() *resend.Client {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if s, ok := c.sender.(*resendSender); ok {
+	switch s := c.sender.(type) {
+	case *resendSender:
 		return s.client
+	case *resendMux:
+		def, _, err := s.defaultSender()
+		if err != nil || def == nil {
+			return nil
+		}
+		return def.client
+	default:
+		return nil
+	}
+}
+
+// ResendProfiles returns the sorted names of configured Resend profiles
+// (empty when the provider is not resend or no profiles are set).
+func (c *CFMail) ResendProfiles() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if m, ok := c.sender.(*resendMux); ok {
+		out := make([]string, len(m.profileKeys))
+		copy(out, m.profileKeys)
+		return out
 	}
 	return nil
 }
@@ -355,9 +408,12 @@ func (c *CFMail) liveSender() mailSender {
 // message id (Resend id, SES MessageId, Unisender Go job_id).
 //
 // From: from_address / WithFromAddress is a soft default when Mail.From is
-// empty. If both are empty, or the resolved From or any To address does not
-// parse (`net/mail.ParseAddress`), Send fails. HTML and Text may both be set;
-// at least one must be non-empty.
+// empty. When Resend default_profile is set, that profile's from_address is
+// the soft default instead. If both are empty, or the resolved From or any To
+// address does not parse (`net/mail.ParseAddress`), Send fails. HTML and Text
+// may both be set; at least one must be non-empty.
+//
+// For a named Resend API key / From pair, use SendWithProfile.
 //
 // If the first HTTP status is 429 or 5xx, Send waits (Retry-After, capped at
 // 1s) and tries once more while ctx is live. 4xx other than 429 and network
@@ -367,7 +423,38 @@ func (c *CFMail) Send(ctx context.Context, m Mail) (string, error) {
 	if sender == nil {
 		return "", errors.New("cf_mail: Send before Init or after Shutdown")
 	}
-	from, err := resolveFrom(m.From, c.From())
+	defaultFrom := c.From()
+	if mux, ok := sender.(*resendMux); ok {
+		if _, profileFrom, err := mux.defaultSender(); err != nil {
+			return "", err
+		} else if mux.defProfile != "" {
+			defaultFrom = profileFrom
+		}
+	}
+	return c.sendMail(ctx, sender, defaultFrom, m)
+}
+
+// SendWithProfile sends m with a named Resend profile (resend.profiles[name]).
+// Soft-default From is that profile's from_address; Mail.From still overrides.
+// SES and Unisender Go have no profiles — use Send and set Mail.From instead.
+func (c *CFMail) SendWithProfile(ctx context.Context, profile string, m Mail) (string, error) {
+	sender := c.liveSender()
+	if sender == nil {
+		return "", errors.New("cf_mail: SendWithProfile before Init or after Shutdown")
+	}
+	mux, ok := sender.(*resendMux)
+	if !ok {
+		return "", errors.New("cf_mail: SendWithProfile requires resend.profiles")
+	}
+	p, err := mux.profile(profile)
+	if err != nil {
+		return "", err
+	}
+	return c.sendMail(ctx, p.sender, p.from, m)
+}
+
+func (c *CFMail) sendMail(ctx context.Context, sender mailSender, defaultFrom string, m Mail) (string, error) {
+	from, err := resolveFrom(m.From, defaultFrom)
 	if err != nil {
 		return "", err
 	}
@@ -396,10 +483,6 @@ func (c *CFMail) Send(ctx context.Context, m Mail) (string, error) {
 		return "", err
 	}
 	c.meter.addRetry(from)
-	sender = c.liveSender()
-	if sender == nil {
-		return "", err
-	}
 	id, err, _ = c.sendOnce(ctx, sender, from, m)
 	return id, err
 }

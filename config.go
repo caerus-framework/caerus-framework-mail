@@ -47,9 +47,32 @@ type MailConfig struct {
 }
 
 // ResendSettings is the nested Resend blob.
+//
+// Two shapes are supported (they may be combined):
+//
+//  1. Legacy single key — api_key + top-level from_address. Send uses that
+//     pair. Flat MAIL_RESEND_API_KEY still fills api_key.
+//  2. Named profiles — profiles map (each api_key + from_address). Use
+//     SendWithProfile to pick one. Optional default_profile makes Send use
+//     that profile when set.
+//
+// Profiles exist because Resend API keys are often bound to one domain.
 type ResendSettings struct {
 	APIKey  string `json:"api_key" yaml:"api_key" env:"-" secret:"redact"`
 	BaseURL string `json:"base_url,omitempty" yaml:"base_url,omitempty" env:"-"`
+	// DefaultProfile names the profiles entry Send uses when set. Empty
+	// keeps Send on the legacy api_key + top-level from_address.
+	DefaultProfile string `json:"default_profile,omitempty" yaml:"default_profile,omitempty" env:"-"`
+	// Profiles are named Resend senders (one API key + From per name).
+	Profiles map[string]ResendProfile `json:"profiles,omitempty" yaml:"profiles,omitempty" env:"-"`
+}
+
+// ResendProfile is one named Resend API key + From pair.
+type ResendProfile struct {
+	APIKey      string `json:"api_key" yaml:"api_key" secret:"redact"`
+	FromAddress string `json:"from_address" yaml:"from_address"`
+	// BaseURL overrides ResendSettings.BaseURL for this profile only.
+	BaseURL string `json:"base_url,omitempty" yaml:"base_url,omitempty"`
 }
 
 // SESSettings is the nested Amazon SES v2 blob.
@@ -105,13 +128,70 @@ func (cfg MailConfig) mergeFlatEnv() MailConfig {
 }
 
 // validateMailConfig runs on every successful load of a registered mail source.
-// from_address must be non-empty so misconfiguration fails at startup or reload
-// rather than on the first Send.
+// Soft-default From must be resolvable at load time, except Resend Path A
+// profiles-only configs that only call SendWithProfile:
+//
+//   - top-level from_address, or
+//   - resend.default_profile → that profile's from_address, or
+//   - non-empty resend.profiles (each profile already has from_address)
 func validateMailConfig(cfg *MailConfig) error {
-	if strings.TrimSpace(cfg.mergeFlatEnv().FromAddress) == "" {
-		return errors.New("cf_mail: from_address is required")
+	merged := cfg.mergeFlatEnv()
+	if err := validateResendProfiles(merged.Resend); err != nil {
+		return err
+	}
+	if strings.TrimSpace(merged.FromAddress) != "" {
+		return nil
+	}
+	if dp := strings.TrimSpace(merged.Resend.DefaultProfile); dp != "" {
+		if p, ok := merged.Resend.Profiles[dp]; ok && strings.TrimSpace(p.FromAddress) != "" {
+			return nil
+		}
+	}
+	if len(merged.Resend.Profiles) > 0 {
+		return nil
+	}
+	return errors.New("cf_mail: from_address is required (or set resend.default_profile / resend.profiles)")
+}
+
+func validateResendProfiles(r ResendSettings) error {
+	if len(r.Profiles) == 0 {
+		if strings.TrimSpace(r.DefaultProfile) != "" {
+			return errors.New("cf_mail: resend.default_profile set but resend.profiles is empty")
+		}
+		return nil
+	}
+	for name, p := range r.Profiles {
+		n := strings.TrimSpace(name)
+		if n == "" {
+			return errors.New("cf_mail: resend.profiles: empty profile name")
+		}
+		if n != name {
+			return fmt.Errorf("cf_mail: resend.profiles: profile name %q has leading/trailing space", name)
+		}
+		if strings.TrimSpace(p.APIKey) == "" {
+			return fmt.Errorf("cf_mail: resend.profiles[%q]: api_key is required", name)
+		}
+		if strings.TrimSpace(p.FromAddress) == "" {
+			return fmt.Errorf("cf_mail: resend.profiles[%q]: from_address is required", name)
+		}
+	}
+	if dp := strings.TrimSpace(r.DefaultProfile); dp != "" {
+		if _, ok := r.Profiles[dp]; !ok {
+			return fmt.Errorf("cf_mail: resend.default_profile %q is not in resend.profiles", dp)
+		}
 	}
 	return nil
+}
+
+func cloneResendProfiles(in map[string]ResendProfile) map[string]ResendProfile {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]ResendProfile, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 func normalizeProvider(raw string) (string, error) {

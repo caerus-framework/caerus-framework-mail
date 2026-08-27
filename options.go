@@ -122,6 +122,17 @@ func WithResendBaseURL(baseURL string) Option {
 	return func(o *options) { o.resend.BaseURL = baseURL }
 }
 
+// WithResendProfiles sets named Resend senders (api_key + from per name).
+// Prefer the config file's resend.profiles in production.
+func WithResendProfiles(profiles map[string]ResendProfile) Option {
+	return func(o *options) { o.resend.Profiles = cloneResendProfiles(profiles) }
+}
+
+// WithResendDefaultProfile names the profiles entry Send uses by default.
+func WithResendDefaultProfile(name string) Option {
+	return func(o *options) { o.resend.DefaultProfile = name }
+}
+
 // WithSESRegion sets the AWS region for SES v2.
 func WithSESRegion(region string) Option {
 	return func(o *options) { o.ses.Region = region }
