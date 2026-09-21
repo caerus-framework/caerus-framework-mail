@@ -1,6 +1,9 @@
 package cf_mail
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidateMailConfigRequiresFromAddress(t *testing.T) {
 	if err := validateMailConfig(&MailConfig{
@@ -75,5 +78,59 @@ func TestValidateMailConfigResendProfiles(t *testing.T) {
 		},
 	}); err == nil {
 		t.Fatal("expected error for default_profile without profiles")
+	}
+}
+
+func TestValidateHTTPSEndpoints(t *testing.T) {
+	ok := MailConfig{
+		Provider:    ProviderResend,
+		FromAddress: "noreply@example.com",
+		Resend:      ResendSettings{APIKey: "re_k", BaseURL: "https://api.resend.com"},
+	}
+	if err := validateMailConfig(&ok); err != nil {
+		t.Fatalf("https base_url: %v", err)
+	}
+	httpURL := MailConfig{
+		Provider:    ProviderResend,
+		FromAddress: "noreply@example.com",
+		Resend:      ResendSettings{APIKey: "re_k", BaseURL: "http://127.0.0.1:9"},
+	}
+	if err := validateMailConfig(&httpURL); err == nil || !strings.Contains(err.Error(), "https") {
+		t.Fatalf("http base_url: %v", err)
+	}
+	sesHTTP := MailConfig{
+		Provider:    ProviderSES,
+		FromAddress: "noreply@example.com",
+		SES:         SESSettings{Region: "eu-central-1", Endpoint: "http://localhost:4566"},
+	}
+	if err := validateMailConfig(&sesHTTP); err == nil || !strings.Contains(err.Error(), "ses.endpoint") {
+		t.Fatalf("http ses.endpoint: %v", err)
+	}
+	uniHTTP := MailConfig{
+		Provider:    ProviderUnisenderGo,
+		FromAddress: "noreply@example.com",
+		UnisenderGo: UnisenderGoSettings{APIKey: "ug", BaseURL: "http://goapi.example/v1"},
+	}
+	if err := validateMailConfig(&uniHTTP); err == nil || !strings.Contains(err.Error(), "unisender_go.base_url") {
+		t.Fatalf("http unisender base_url: %v", err)
+	}
+	profileHTTP := MailConfig{
+		Provider: ProviderResend,
+		Resend: ResendSettings{
+			Profiles: map[string]ResendProfile{
+				"kronos": {APIKey: "re_k", FromAddress: "a@x.io", BaseURL: "http://evil.invalid"},
+			},
+		},
+	}
+	if err := validateMailConfig(&profileHTTP); err == nil || !strings.Contains(err.Error(), "base_url") {
+		t.Fatalf("http profile base_url: %v", err)
+	}
+	emptyOK := MailConfig{
+		Provider:    ProviderResend,
+		FromAddress: "noreply@example.com",
+		Resend:      ResendSettings{APIKey: "re_k"},
+	}
+	if err := validateMailConfig(&emptyOK); err != nil {
+		t.Fatalf("empty base_url (SDK default https): %v", err)
 	}
 }

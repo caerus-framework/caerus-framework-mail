@@ -30,6 +30,9 @@ func (c *CFMail) newUnisenderGoSender() (*unisenderGoSender, error) {
 	if base == "" {
 		base = defaultUnisenderGoBaseURL
 	}
+	if err := requireHTTPSURL("unisender_go.base_url", base); err != nil {
+		return nil, err
+	}
 	base = strings.TrimRight(base, "/")
 	skip := 1 // transactional default: do not append a campaign unsubscribe block
 	if c.unisender.SkipUnsubscribe != nil && !*c.unisender.SkipUnsubscribe {

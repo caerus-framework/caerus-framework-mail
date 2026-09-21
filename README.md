@@ -109,6 +109,10 @@ overrides that send only. Without a config source, `WithFromAddress` or
 resolved address or any `To` does not parse as an email
 (`net/mail.ParseAddress`), Send fails. At least one of HTML or Text is required.
 
+This module does **not** sanitize `Mail.HTML` or `Mail.Text`. Product
+templates must not concatenate untrusted user HTML into the body (that is
+XSS / injection in the recipient’s mail client, owned by the app).
+
 `IdempotencyKey` is sent to Resend and Unisender Go. SES v2 `SendEmail` has
 no matching field — it is ignored there.
 
@@ -192,10 +196,16 @@ Default `EnvPrefix` is `MAIL_` (from the source name `mail`).
 | SES region | `ses.region` | `MAIL_SES_REGION` |
 | SES access key | `ses.access_key_id` | `MAIL_SES_ACCESS_KEY_ID` |
 | SES secret | `ses.secret_access_key` | `MAIL_SES_SECRET_ACCESS_KEY` |
-| SES endpoint (LocalStack) | `ses.endpoint` | `MAIL_SES_ENDPOINT` |
+| SES endpoint | `ses.endpoint` | `MAIL_SES_ENDPOINT` |
 | Unisender Go API key | `unisender_go.api_key` | `MAIL_UNISENDER_GO_API_KEY` |
 | Unisender Go base URL | `unisender_go.base_url` | `MAIL_UNISENDER_GO_BASE_URL` |
 | Skip unsubscribe block | `unisender_go.skip_unsubscribe` | `MAIL_UNISENDER_GO_SKIP_UNSUBSCRIBE` |
+
+Empty `base_url` / `endpoint` uses the provider’s **https** default.
+Non-empty values must be `https://…` (Path A). `http://` is rejected —
+this is trusted ops config; a typo must not ship the API key in
+cleartext. LocalStack SES is not a reason to allow http here: put TLS
+in front, or leave `endpoint` empty for the real AWS endpoint.
 
 **Wrong vs right:**
 
@@ -249,6 +259,16 @@ Rules juniors trip on:
 You can still keep a legacy `resend.api_key` + top-level `from_address`
 **and** add profiles; `Send` stays on the legacy pair unless
 `default_profile` is set.
+
+```text
+Wrong: WithAPIKey / WithResendAPIKey in product code for each tenant domain.
+Right: named profiles in the mounted mail.json (ESO); SendWithProfile(name)
+       or default_profile. Tenant keys stay in the file, not in main.
+
+Wrong: Send() when you meant a profile (legacy key / wrong From).
+Right: SendWithProfile("kronos", …) for that domain, or set default_profile.
+```
+
 ### SES credentials (two exclusive paths)
 
 **Path A — file keys (local / explicit):** set both `access_key_id` and
