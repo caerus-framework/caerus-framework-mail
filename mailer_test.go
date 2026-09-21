@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -134,6 +135,32 @@ func TestInitResendBuildsClient(t *testing.T) {
 	}
 	if m.Provider() != ProviderResend {
 		t.Fatalf("Provider() = %q", m.Provider())
+	}
+}
+
+func TestInitDoesNotLogAPIKey(t *testing.T) {
+	const key = "re_fixture_secret_key_never_log"
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	m := New(WithProvider(ProviderResend), WithResendAPIKey(key), WithFromAddress("noreply@x.io"), WithLogger(log))
+	if err := m.Init(context.Background(), cf.New()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	t.Cleanup(func() { _ = m.Shutdown(context.Background()) })
+	out := buf.String()
+	if strings.Contains(out, key) {
+		t.Fatalf("Init log leaked API key:\n%s", out)
+	}
+	if !strings.Contains(out, "credential_set") {
+		t.Fatalf("expected SecretSet presence attr, got:\n%s", out)
+	}
+}
+
+func TestInitRejectsHTTPBaseURL(t *testing.T) {
+	m := New(WithProvider(ProviderResend), WithResendAPIKey("re_key"), WithFromAddress("noreply@x.io"),
+		WithResendBaseURL("http://127.0.0.1:9"))
+	if err := m.Init(context.Background(), cf.New()); err == nil || !strings.Contains(err.Error(), "https") {
+		t.Fatalf("http base_url Init: %v", err)
 	}
 }
 
@@ -450,8 +477,8 @@ func TestReloadLastGood(t *testing.T) {
 	if !ok {
 		t.Fatal("configuration missing")
 	}
-	if err := conf.Reload("mail"); err != nil {
-		t.Fatalf("Reload: %v", err)
+	if err := conf.Reload("mail"); err == nil {
+		t.Fatal("Reload should reject invalid base_url")
 	}
 	if m.ResendClient() == nil || m.ResendClient().ApiKey != "re_k1" {
 		t.Fatalf("last-good lost: %+v", m.ResendClient())

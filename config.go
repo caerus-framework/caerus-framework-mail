@@ -3,6 +3,7 @@ package cf_mail
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -139,6 +140,9 @@ func validateMailConfig(cfg *MailConfig) error {
 	if err := validateResendProfiles(merged.Resend); err != nil {
 		return err
 	}
+	if err := validateHTTPSEndpoints(merged); err != nil {
+		return err
+	}
 	if strings.TrimSpace(merged.FromAddress) != "" {
 		return nil
 	}
@@ -174,11 +178,45 @@ func validateResendProfiles(r ResendSettings) error {
 		if strings.TrimSpace(p.FromAddress) == "" {
 			return fmt.Errorf("cf_mail: resend.profiles[%q]: from_address is required", name)
 		}
+		if err := requireHTTPSURL(fmt.Sprintf("resend.profiles[%q].base_url", name), p.BaseURL); err != nil {
+			return err
+		}
 	}
 	if dp := strings.TrimSpace(r.DefaultProfile); dp != "" {
 		if _, ok := r.Profiles[dp]; !ok {
 			return fmt.Errorf("cf_mail: resend.default_profile %q is not in resend.profiles", dp)
 		}
+	}
+	return nil
+}
+
+func validateHTTPSEndpoints(cfg MailConfig) error {
+	if err := requireHTTPSURL("resend.base_url", cfg.Resend.BaseURL); err != nil {
+		return err
+	}
+	if err := requireHTTPSURL("unisender_go.base_url", cfg.UnisenderGo.BaseURL); err != nil {
+		return err
+	}
+	if err := requireHTTPSURL("ses.endpoint", cfg.SES.Endpoint); err != nil {
+		return err
+	}
+	return nil
+}
+
+// requireHTTPSURL accepts empty (SDK/module default is https) or an absolute
+// https URL. http:// and schemeless strings fail — this is Path A (trusted
+// ops config must not ship API keys in cleartext).
+func requireHTTPSURL(field, raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return fmt.Errorf("cf_mail: %s must be an absolute https URL, got %q", field, raw)
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("cf_mail: %s must use https, got scheme %q", field, u.Scheme)
 	}
 	return nil
 }

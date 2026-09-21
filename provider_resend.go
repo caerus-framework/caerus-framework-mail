@@ -162,6 +162,9 @@ func (c *CFMail) buildResendClient(apiKey, baseURL string) (*resendSender, error
 	hc := c.meteredClient()
 	client := resend.NewCustomClient(hc, apiKey)
 	if baseURL != "" {
+		if err := requireHTTPSURL("resend.base_url", baseURL); err != nil {
+			return nil, err
+		}
 		parsed, err := url.Parse(baseURL)
 		if err != nil {
 			return nil, fmt.Errorf("invalid base_url %q: %w", baseURL, err)

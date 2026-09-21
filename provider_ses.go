@@ -35,6 +35,9 @@ func (c *CFMail) newSESSender(ctx context.Context) (*sesSender, error) {
 		opts = append(opts, config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(id, secret, "")))
 	}
 	if c.ses.Endpoint != "" {
+		if err := requireHTTPSURL("ses.endpoint", c.ses.Endpoint); err != nil {
+			return nil, err
+		}
 		opts = append(opts, config.WithBaseEndpoint(c.ses.Endpoint))
 	}
 	awsCfg, err := config.LoadDefaultConfig(ctx, opts...)
