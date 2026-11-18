@@ -64,4 +64,16 @@ func TestMergeFlatEnv(t *testing.T) {
 	if cfg.Resend.APIKey != "from-env" {
 		t.Fatalf("flat env fills empty nested, got %q", cfg.Resend.APIKey)
 	}
+	cfg = MailConfig{UnisenderGoCustomBackendID: "99"}.mergeFlatEnv()
+	if cfg.UnisenderGo.CustomBackendID == nil || *cfg.UnisenderGo.CustomBackendID != 99 {
+		t.Fatalf("flat custom_backend_id: %+v", cfg.UnisenderGo.CustomBackendID)
+	}
+	fileID := int64(7)
+	cfg = MailConfig{
+		UnisenderGoCustomBackendID: "99",
+		UnisenderGo:                UnisenderGoSettings{CustomBackendID: &fileID},
+	}.mergeFlatEnv()
+	if cfg.UnisenderGo.CustomBackendID == nil || *cfg.UnisenderGo.CustomBackendID != 7 {
+		t.Fatalf("nested custom_backend_id should win, got %+v", cfg.UnisenderGo.CustomBackendID)
+	}
 }

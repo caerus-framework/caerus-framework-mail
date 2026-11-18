@@ -162,6 +162,15 @@ func WithUnisenderGoBaseURL(baseURL string) Option {
 	return func(o *options) { o.unisender.BaseURL = baseURL }
 }
 
+// WithUnisenderGoCustomBackendID sets message.options.custom_backend_id for
+// Unisender Go sends. Resend and SES ignore this.
+func WithUnisenderGoCustomBackendID(id int64) Option {
+	return func(o *options) {
+		v := id
+		o.unisender.CustomBackendID = &v
+	}
+}
+
 // WithLogger overrides the logger used for component diagnostics. By default
 // the component logs through the framework logs component.
 func WithLogger(logger *slog.Logger) Option {

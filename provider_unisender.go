@@ -14,10 +14,11 @@ import (
 const defaultUnisenderGoBaseURL = "https://goapi.unisender.ru/en/transactional/api/v1"
 
 type unisenderGoSender struct {
-	http      *http.Client
-	apiKey    string
-	baseURL   string
-	skipUnsub int
+	http            *http.Client
+	apiKey          string
+	baseURL         string
+	skipUnsub       int
+	customBackendID *int64
 }
 
 func (s *unisenderGoSender) Provider() string { return ProviderUnisenderGo }
@@ -39,10 +40,11 @@ func (c *CFMail) newUnisenderGoSender() (*unisenderGoSender, error) {
 		skip = 0
 	}
 	return &unisenderGoSender{
-		http:      c.meteredClient(),
-		apiKey:    c.unisender.APIKey,
-		baseURL:   base,
-		skipUnsub: skip,
+		http:            c.meteredClient(),
+		apiKey:          c.unisender.APIKey,
+		baseURL:         base,
+		skipUnsub:       skip,
+		customBackendID: c.unisender.CustomBackendID,
 	}, nil
 }
 
@@ -51,17 +53,23 @@ type unisenderSendRequest struct {
 }
 
 type unisenderMessage struct {
-	Recipients      []unisenderRecipient `json:"recipients"`
-	Subject         string               `json:"subject"`
-	FromEmail       string               `json:"from_email"`
-	FromName        string               `json:"from_name,omitempty"`
-	ReplyTo         string               `json:"reply_to,omitempty"`
-	ReplyToName     string               `json:"reply_to_name,omitempty"`
-	Body            unisenderBody        `json:"body"`
-	Tags            []string             `json:"tags,omitempty"`
-	GlobalMetadata  map[string]string    `json:"global_metadata,omitempty"`
-	SkipUnsubscribe int                  `json:"skip_unsubscribe"`
-	IdempotenceKey  string               `json:"idempotence_key,omitempty"`
+	Recipients      []unisenderRecipient     `json:"recipients"`
+	Subject         string                   `json:"subject"`
+	FromEmail       string                   `json:"from_email"`
+	FromName        string                   `json:"from_name,omitempty"`
+	ReplyTo         string                   `json:"reply_to,omitempty"`
+	ReplyToName     string                   `json:"reply_to_name,omitempty"`
+	Body            unisenderBody            `json:"body"`
+	Tags            []string                 `json:"tags,omitempty"`
+	GlobalMetadata  map[string]string        `json:"global_metadata,omitempty"`
+	SkipUnsubscribe int                      `json:"skip_unsubscribe"`
+	IdempotenceKey  string                   `json:"idempotence_key,omitempty"`
+	Options         *unisenderMessageOptions `json:"options,omitempty"`
+}
+
+// unisenderMessageOptions is Unisender Go message.options (provider-specific).
+type unisenderMessageOptions struct {
+	CustomBackendID int64 `json:"custom_backend_id"`
 }
 
 type unisenderRecipient struct {
@@ -102,6 +110,9 @@ func (s *unisenderGoSender) Send(ctx context.Context, from string, m Mail) (stri
 		Body:            unisenderBody{HTML: m.HTML, Plaintext: m.Text},
 		SkipUnsubscribe: s.skipUnsub,
 		IdempotenceKey:  m.IdempotencyKey,
+	}
+	if s.customBackendID != nil {
+		msg.Options = &unisenderMessageOptions{CustomBackendID: *s.customBackendID}
 	}
 	if m.ReplyTo != "" {
 		replyName, replyEmail, err := parseMailbox(m.ReplyTo)

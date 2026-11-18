@@ -329,6 +329,7 @@ func TestReloadResendProfiles(t *testing.T) {
 func TestSendUnisenderGo(t *testing.T) {
 	stub := &stubRoundTripper{body: `{"status":"success","job_id":"1ZymBc-00041N-9X"}`, code: 200}
 	m := New(WithProvider(ProviderUnisenderGo), WithUnisenderGoAPIKey("ug_key"),
+		WithUnisenderGoCustomBackendID(42),
 		WithFromAddress("Brand <noreply@x.io>"),
 		WithHTTPClient(&http.Client{Transport: stub}))
 	if err := m.Init(context.Background(), cf.New()); err != nil {
@@ -359,6 +360,35 @@ func TestSendUnisenderGo(t *testing.T) {
 	}
 	if msg["skip_unsubscribe"] != float64(1) {
 		t.Fatalf("skip_unsubscribe = %v (transactional default is 1)", msg["skip_unsubscribe"])
+	}
+	opts, ok := msg["options"].(map[string]any)
+	if !ok {
+		t.Fatalf("options missing: %+v", msg)
+	}
+	if opts["custom_backend_id"] != float64(42) {
+		t.Fatalf("options.custom_backend_id = %v", opts["custom_backend_id"])
+	}
+}
+
+func TestSendUnisenderGoOmitsOptionsWhenNoCustomBackend(t *testing.T) {
+	stub := &stubRoundTripper{body: `{"status":"success","job_id":"job"}`, code: 200}
+	m := New(WithProvider(ProviderUnisenderGo), WithUnisenderGoAPIKey("ug_key"),
+		WithFromAddress("noreply@x.io"),
+		WithHTTPClient(&http.Client{Transport: stub}))
+	if err := m.Init(context.Background(), cf.New()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	t.Cleanup(func() { _ = m.Shutdown(context.Background()) })
+	if _, err := m.Send(context.Background(), testMail("user@example.com")); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(stub.lastBody), &payload); err != nil {
+		t.Fatalf("body: %v", err)
+	}
+	msg := payload["message"].(map[string]any)
+	if _, ok := msg["options"]; ok {
+		t.Fatalf("options should be omitted when custom_backend_id unset: %+v", msg["options"])
 	}
 }
 
