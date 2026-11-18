@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -36,15 +37,16 @@ type MailConfig struct {
 	// Flat env aliases (nested JSON/YAML still wins when both are set after
 	// merge: env overlay fills these, applyConfig copies them into the nested
 	// structs when the nested field is still empty).
-	ResendAPIKey         string `json:"-" yaml:"-" env:"RESEND_API_KEY" secret:"redact"`
-	ResendBaseURL        string `json:"-" yaml:"-" env:"RESEND_BASE_URL"`
-	SESRegion            string `json:"-" yaml:"-" env:"SES_REGION"`
-	SESAccessKeyID       string `json:"-" yaml:"-" env:"SES_ACCESS_KEY_ID"`
-	SESSecretAccessKey   string `json:"-" yaml:"-" env:"SES_SECRET_ACCESS_KEY" secret:"redact"`
-	SESEndpoint          string `json:"-" yaml:"-" env:"SES_ENDPOINT"`
-	UnisenderGoAPIKey    string `json:"-" yaml:"-" env:"UNISENDER_GO_API_KEY" secret:"redact"`
-	UnisenderGoBaseURL   string `json:"-" yaml:"-" env:"UNISENDER_GO_BASE_URL"`
-	UnisenderGoSkipUnsub *bool  `json:"-" yaml:"-" env:"UNISENDER_GO_SKIP_UNSUBSCRIBE"`
+	ResendAPIKey               string `json:"-" yaml:"-" env:"RESEND_API_KEY" secret:"redact"`
+	ResendBaseURL              string `json:"-" yaml:"-" env:"RESEND_BASE_URL"`
+	SESRegion                  string `json:"-" yaml:"-" env:"SES_REGION"`
+	SESAccessKeyID             string `json:"-" yaml:"-" env:"SES_ACCESS_KEY_ID"`
+	SESSecretAccessKey         string `json:"-" yaml:"-" env:"SES_SECRET_ACCESS_KEY" secret:"redact"`
+	SESEndpoint                string `json:"-" yaml:"-" env:"SES_ENDPOINT"`
+	UnisenderGoAPIKey          string `json:"-" yaml:"-" env:"UNISENDER_GO_API_KEY" secret:"redact"`
+	UnisenderGoBaseURL         string `json:"-" yaml:"-" env:"UNISENDER_GO_BASE_URL"`
+	UnisenderGoSkipUnsub       *bool  `json:"-" yaml:"-" env:"UNISENDER_GO_SKIP_UNSUBSCRIBE"`
+	UnisenderGoCustomBackendID string `json:"-" yaml:"-" env:"UNISENDER_GO_CUSTOM_BACKEND_ID"`
 }
 
 // ResendSettings is the nested Resend blob.
@@ -95,6 +97,9 @@ type UnisenderGoSettings struct {
 	APIKey          string `json:"api_key" yaml:"api_key" env:"-" secret:"redact"`
 	BaseURL         string `json:"base_url,omitempty" yaml:"base_url,omitempty" env:"-"`
 	SkipUnsubscribe *bool  `json:"skip_unsubscribe,omitempty" yaml:"skip_unsubscribe,omitempty" env:"-"`
+	// CustomBackendID is sent as message.options.custom_backend_id when set.
+	// Unisender Go only; Resend/SES ignore this field.
+	CustomBackendID *int64 `json:"custom_backend_id,omitempty" yaml:"custom_backend_id,omitempty" env:"-"`
 }
 
 func (cfg MailConfig) mergeFlatEnv() MailConfig {
@@ -125,7 +130,25 @@ func (cfg MailConfig) mergeFlatEnv() MailConfig {
 	if cfg.UnisenderGo.SkipUnsubscribe == nil {
 		cfg.UnisenderGo.SkipUnsubscribe = cfg.UnisenderGoSkipUnsub
 	}
+	if cfg.UnisenderGo.CustomBackendID == nil {
+		if id, ok, err := parseOptionalInt64(cfg.UnisenderGoCustomBackendID); err == nil && ok {
+			cfg.UnisenderGo.CustomBackendID = &id
+		}
+	}
 	return cfg
+}
+
+// parseOptionalInt64 parses a trimmed decimal string. Empty → (0, false, nil).
+func parseOptionalInt64(raw string) (int64, bool, error) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return 0, false, nil
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, false, fmt.Errorf("not an int64: %w", err)
+	}
+	return n, true, nil
 }
 
 // validateMailConfig runs on every successful load of a registered mail source.
@@ -141,6 +164,9 @@ func validateMailConfig(cfg *MailConfig) error {
 		return err
 	}
 	if err := validateHTTPSEndpoints(merged); err != nil {
+		return err
+	}
+	if err := validateUnisenderGoCustomBackendID(merged); err != nil {
 		return err
 	}
 	if strings.TrimSpace(merged.FromAddress) != "" {
@@ -186,6 +212,20 @@ func validateResendProfiles(r ResendSettings) error {
 		if _, ok := r.Profiles[dp]; !ok {
 			return fmt.Errorf("cf_mail: resend.default_profile %q is not in resend.profiles", dp)
 		}
+	}
+	return nil
+}
+
+func validateUnisenderGoCustomBackendID(cfg MailConfig) error {
+	// Nested JSON/YAML already typed as *int64. Flat env must parse when set
+	// and the nested field is still empty after mergeFlatEnv.
+	raw := strings.TrimSpace(cfg.UnisenderGoCustomBackendID)
+	if raw == "" || cfg.UnisenderGo.CustomBackendID != nil {
+		return nil
+	}
+	_, _, err := parseOptionalInt64(raw)
+	if err != nil {
+		return fmt.Errorf("cf_mail: unisender_go.custom_backend_id (MAIL_UNISENDER_GO_CUSTOM_BACKEND_ID): %w", err)
 	}
 	return nil
 }

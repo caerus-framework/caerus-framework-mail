@@ -177,7 +177,8 @@ The configuration env overlay does **not** walk nested structs, so local
   "unisender_go": {
     "api_key": "",
     "base_url": "https://goapi.unisender.ru/en/transactional/api/v1",
-    "skip_unsubscribe": true
+    "skip_unsubscribe": true,
+    "custom_backend_id": null
   }
 }
 ```
@@ -200,6 +201,7 @@ Default `EnvPrefix` is `MAIL_` (from the source name `mail`).
 | Unisender Go API key | `unisender_go.api_key` | `MAIL_UNISENDER_GO_API_KEY` |
 | Unisender Go base URL | `unisender_go.base_url` | `MAIL_UNISENDER_GO_BASE_URL` |
 | Skip unsubscribe block | `unisender_go.skip_unsubscribe` | `MAIL_UNISENDER_GO_SKIP_UNSUBSCRIBE` |
+| Custom backend ID | `unisender_go.custom_backend_id` | `MAIL_UNISENDER_GO_CUSTOM_BACKEND_ID` |
 
 Empty `base_url` / `endpoint` uses the provider’s **https** default.
 Non-empty values must be `https://…` (Path A). `http://` is rejected —
@@ -287,6 +289,11 @@ the `X-API-KEY` header. `skip_unsubscribe` defaults **on** (value 1) so
 transactional mail does not get a campaign unsubscribe footer; set
 `skip_unsubscribe: false` only if Unisender support enabled that for you.
 
+When `custom_backend_id` is set, each send includes it under
+`message.options.custom_backend_id` (Unisender Go only; omitted when unset).
+That routes mail through a specific Unisender custom backend / IP pool for
+the account.
+
 `Send` returns the Unisender Go `job_id`. If every `To` address is in
 `failed_emails`, Send fails.
 
@@ -326,7 +333,7 @@ The `from` label on traffic counters is the **actual sender of each email**.
 | `WithResendAPIKey` / `WithResendBaseURL` | Resend construct-time |
 | `WithResendProfiles` / `WithResendDefaultProfile` | Resend named profiles (tests / embedded) |
 | `WithSESRegion` / `WithSESCredentials` / `WithSESEndpoint` | SES construct-time |
-| `WithUnisenderGoAPIKey` / `WithUnisenderGoBaseURL` | Unisender Go construct-time |
+| `WithUnisenderGoAPIKey` / `WithUnisenderGoBaseURL` / `WithUnisenderGoCustomBackendID` | Unisender Go construct-time |
 | `WithName(name)` | custom component name (default `"mail"`) |
 | `WithLogger(*slog.Logger)` | explicit logger override |
 

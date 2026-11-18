@@ -137,6 +137,9 @@ func (c *CFMail) applyConfig(cfg MailConfig) {
 	if cfg.UnisenderGo.SkipUnsubscribe != nil {
 		c.unisender.SkipUnsubscribe = cfg.UnisenderGo.SkipUnsubscribe
 	}
+	if cfg.UnisenderGo.CustomBackendID != nil {
+		c.unisender.CustomBackendID = cfg.UnisenderGo.CustomBackendID
+	}
 }
 
 // Name implements cf.CaerusComponent.
